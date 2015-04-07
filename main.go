@@ -1,6 +1,7 @@
 package main
 
 import (
+	"time"
 	//"encoding/json"
 	log4go "code.google.com/p/log4go"
 	"fmt"
@@ -36,8 +37,10 @@ func main() {
 func xHandle(xHandler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
-			if e, ok := recover().(error); ok {
-				log4go.Warn(fmt.Sprintf("%v %v", xHandler, e))
+			if err := recover(); err != nil {
+				log4go.Warn(fmt.Sprintf("%v %v", xHandler, err))
+
+				time.Sleep(10 * time.Millisecond)
 			}
 		}()
 
@@ -63,6 +66,8 @@ func serviceHandle(w http.ResponseWriter, r *http.Request) {
 
 	switch service {
 	case "operation":
-		oper.OperationHandle(w, method, param)
+		result := oper.OperationHandle(w, method, param)
+
+		fmt.Println(result)
 	}
 }
