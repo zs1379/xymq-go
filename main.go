@@ -1,8 +1,6 @@
 package main
 
 import (
-	"time"
-	//"encoding/json"
 	log4go "code.google.com/p/log4go"
 	"fmt"
 	"net/http"
@@ -11,7 +9,7 @@ import (
 
 const (
 	//配置文件所在位置
-	//configPath = "/etc/xyDog.conf"
+	configPath = "/home/xiaoy/dev/goapp/src/xiaoy.name/xymq/mq.conf"
 	//配置日志存放位置
 	logFile = "/home/xiaoy/dev/goapp/src/xiaoy.name/xymq/mq.log"
 )
@@ -40,7 +38,8 @@ func xHandle(xHandler http.HandlerFunc) http.HandlerFunc {
 			if err := recover(); err != nil {
 				log4go.Warn(fmt.Sprintf("%v %v", xHandler, err))
 
-				time.Sleep(10 * time.Millisecond)
+				//返回相关内容给客户端
+				w.Write([]byte(fmt.Sprintf("%s", err)))
 			}
 		}()
 
@@ -66,8 +65,12 @@ func serviceHandle(w http.ResponseWriter, r *http.Request) {
 
 	switch service {
 	case "operation":
-		result := oper.OperationHandle(w, method, param)
+		result, err := oper.OperationHandle(w, method, param)
 
-		fmt.Println(result)
+		if err != nil {
+			log4go.Warn("发生错误返回:%s", result)
+		}
+
+		w.Write([]byte(result))
 	}
 }

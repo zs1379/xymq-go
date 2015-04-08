@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -28,7 +29,7 @@ var (
 /**
  * 方法处理，用于某种方法的调用
  */
-func OperationHandle(w http.ResponseWriter, method string, param string) string {
+func OperationHandle(w http.ResponseWriter, method string, param string) (string, error) {
 	returnValue.ReqId = getReqId()
 	returnValue.Ret = 0
 
@@ -36,49 +37,91 @@ func OperationHandle(w http.ResponseWriter, method string, param string) string 
 	var jsonData interface{}
 	err := json.Unmarshal([]byte(param), &jsonData)
 	if err != nil {
-		panic(fmt.Sprintf("json解析失败哟,err:%s", err))
+		returnValue.Msg = fmt.Sprintf("json解析失败哟,err:%s", err)
+		returnValue.Ret = 9999
+		panic(getReturnValue())
 	}
 
 	//转化参数
 	var params []string
 
 	for _, v := range jsonData.([]interface{}) {
-		params = append(params, v.(string))
+		params = append(params, fmt.Sprintf("%v", v))
 	}
 
 	//根据方法名称选择处理方法
 	switch method {
 	case "push":
 		if len(params) == 2 {
-			result, err := push(params[0], params[1])
+			err := push(params[0], params[1])
 
 			if err != nil {
 				returnValue.Msg = err.Error()
 			}
-
-			returnValue.MsgId = result
 		} else {
-			panic(fmt.Sprintf("method:%s,参数长度异常%s", method, params))
+			returnValue.Msg = fmt.Sprintf("method:%s,参数长度异常%s", method, params)
+			returnValue.Ret = 9999
+			panic(getReturnValue())
 		}
 	case "prePush":
 		if len(params) == 2 {
-			result, err := prePush(params[0], params[1])
+			err := prePush(params[0], params[1])
+
+			if err != nil {
+				returnValue.Msg = err.Error()
+			}
+		} else {
+			returnValue.Msg = fmt.Sprintf("method:%s,参数长度异常%s", method, params)
+			returnValue.Ret = 9999
+			panic(getReturnValue())
+		}
+	case "pop":
+		if len(params) == 2 {
+			timeout, err := strconv.Atoi(params[1])
 
 			if err != nil {
 				returnValue.Msg = err.Error()
 			}
 
-			returnValue.MsgId = result
+			err = pop(params[0], timeout)
+
+			if err != nil {
+				returnValue.Msg = err.Error()
+			}
+		} else if len(params) == 1 {
+			err := pop(params[0], 30)
+
+			if err != nil {
+				returnValue.Msg = err.Error()
+			}
 		} else {
-			panic(fmt.Sprintf("method:%s,参数长度异常%s", method, params))
+			returnValue.Msg = fmt.Sprintf("method:%s,参数长度异常%s", method, params)
+			returnValue.Ret = 9999
+			panic(getReturnValue())
+		}
+	case "remove":
+		if len(params) == 2 {
+			err := remove(params[0], params[1])
+
+			if err != nil {
+				returnValue.Msg = err.Error()
+			}
+		} else {
+			returnValue.Msg = fmt.Sprintf("method:%s,参数长度异常%s", method, params)
+			returnValue.Ret = 9999
+			panic(getReturnValue())
 		}
 	default:
-		panic(fmt.Sprintf("method:%s,无有效方法%s", method, params))
+		returnValue.Msg = fmt.Sprintf("method:%s,无有效方法%s", method, params)
+		returnValue.Ret = 9999
+		panic(getReturnValue())
 	}
 
-	returnJsonValue := getReturnValue()
-
-	return returnJsonValue
+	if returnValue.Ret == 0 {
+		return getReturnValue(), nil
+	} else {
+		return getReturnValue(), errors.New("")
+	}
 }
 
 /**
@@ -97,51 +140,51 @@ func getReturnValue() string {
 /**
  * 推入队列
  */
-func push(pQueueName string, pMessageBody string) (string, error) {
+func push(pQueueName string, pMessageBody string) error {
 	queueName = pQueueName
 	msgBody = pMessageBody
 
 	err := check()
 
 	if err != nil {
-		return "", err
+		return err
 	}
 
-	msgId, err := pushBack(false)
+	err = pushBack(false)
 
 	if err != nil {
-		return "", err
+		return err
 	}
 
-	return msgId, nil
+	return nil
 }
 
 /**
  * 推入优先队列
  */
-func prePush(pQueueName string, pMessageBody string) (string, error) {
+func prePush(pQueueName string, pMessageBody string) error {
 	queueName = pQueueName
 	msgBody = pMessageBody
 
 	err := check()
 
 	if err != nil {
-		return "", err
+		return err
 	}
 
-	msgId, err := pushBack(true)
+	err = pushBack(true)
 
 	if err != nil {
-		return "", err
+		return err
 	}
 
-	return msgId, nil
+	return nil
 }
 
 /**
  * 将消息插入队列
  */
-func pushBack(pIsPre bool) (string, error) {
+func pushBack(pIsPre bool) error {
 	msgId := getMsgId()
 
 	//获取redis
@@ -152,7 +195,7 @@ func pushBack(pIsPre bool) (string, error) {
 
 	if err != nil {
 		returnValue.Ret = 9999
-		return "", err
+		return err
 	}
 
 	//插入活跃消息队列
@@ -164,14 +207,95 @@ func pushBack(pIsPre bool) (string, error) {
 
 	if err != nil {
 		returnValue.Ret = 9999
-		return "", err
+		return err
 	} else {
-		return msgId, nil
+		returnValue.MsgId = msgId
+		return nil
 	}
 }
 
-func pop(pQueueName string, pVisibilityTimeOut int) (string, error) {
+/**
+ * 取出消息
+ */
+func pop(pQueueName string, pVisibilityTimeOut int) error {
 	queueName = pQueueName
+
+	//获取redis
+	redis := getRedis(queueName)
+
+	result, err := redis.Do("rPop", getKey("msgIdPreList"))
+
+	if err != nil {
+		returnValue.Ret = 9999
+		return err
+	}
+
+	if result == nil {
+		result, err = redis.Do("rPop", getKey("msgIdList"))
+
+		if err != nil {
+			returnValue.Ret = 9999
+			return err
+		}
+	}
+
+	if result == nil {
+		return nil
+	}
+
+	//获取消息内容
+	messageBody, err := redis.Do("hGet", getKey("msgIdHash"), fmt.Sprintf("%s", result))
+
+	if err != nil {
+		returnValue.Ret = 9999
+		return err
+	}
+
+	//加入非活跃队列
+	timeout := time.Now().Unix() + int64(pVisibilityTimeOut)
+
+	_, err = redis.Do("zAdd", getKey("unActivitySet"), timeout, result)
+
+	if err != nil {
+		returnValue.Ret = 9999
+		return err
+	}
+
+	returnValue.MsgId = fmt.Sprintf("%s", result)
+	returnValue.MsgBody = fmt.Sprintf("%s", messageBody)
+
+	return nil
+}
+
+/**
+ * 从非活跃队列移除消息
+ */
+func remove(pQueueName string, pMsgId string) error {
+	queueName = pQueueName
+
+	//获取redis
+	redis := getRedis(queueName)
+
+	result, err := redis.Do("zRem", getKey("unActivitySet"), pMsgId)
+
+	if err != nil {
+		returnValue.Ret = 9999
+		return err
+	}
+
+	//如果非活跃队列删除成功，则真正移除消息
+	if result.(int64) != 0 {
+		_, err := redis.Do("hDel", getKey("msgIdHash"), pMsgId)
+
+		if err != nil {
+			returnValue.Ret = 9999
+			return err
+		}
+	}
+
+	returnValue.MsgId = pMsgId
+
+	return nil
 }
 
 /**
